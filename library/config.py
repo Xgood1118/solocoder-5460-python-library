@@ -13,6 +13,7 @@ BOOKS_FILE = DATA_DIR / "books.json"
 SHELVES_FILE = DATA_DIR / "shelves.json"
 BORROW_RECORDS_FILE = DATA_DIR / "borrow_records.json"
 MISPLACEMENT_RECORDS_FILE = DATA_DIR / "misplacement_records.json"
+INSPECTION_RECORDS_FILE = DATA_DIR / "inspection_records.json"
 CATEGORY_MAP_FILE = CONFIG_DIR / "category_map.json"
 CUSTOM_PATHS_FILE = CONFIG_DIR / "custom_paths.json"
 

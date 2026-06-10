@@ -8,7 +8,7 @@ from pathlib import Path
 
 from library.config import (
     BOOKS_FILE, BORROW_RECORDS_FILE, MISPLACEMENT_RECORDS_FILE,
-    SHELVES_FILE, DATA_DIR
+    INSPECTION_RECORDS_FILE, SHELVES_FILE, DATA_DIR
 )
 from library.book import BookManager
 from library.shelf import ShelfManager
@@ -106,10 +106,13 @@ def generate_test_data():
         borrow_mgr._save_records()
         print(f"  已生成 {len(borrow_mgr._records)} 条借阅记录")
 
-    if MISPLACEMENT_RECORDS_FILE.exists():
-        print("  错位记录已存在，跳过")
+    need_misplacement = not MISPLACEMENT_RECORDS_FILE.exists()
+    need_inspection = not INSPECTION_RECORDS_FILE.exists()
+
+    if not need_misplacement and not need_inspection:
+        print("  错位/抽检记录已存在，跳过")
     else:
-        print("  正在生成错位记录...")
+        print("  正在生成抽检记录（含正确和错位）...")
         books = book_mgr.list_books()
         valid_books = [b for b in books if b.get("proper_location")]
 
@@ -121,49 +124,95 @@ def generate_test_data():
             ("position", "位置偏移"),
         ]
 
-        for i in range(25):
+        misplacement_records = []
+        inspection_records = []
+        misp_id = 0
+        insp_id = 0
+
+        for i in range(75):
             book = random.choice(valid_books)
             proper = book.get("proper_location", "")
             parts = proper.split("-")
             if len(parts) != 5:
                 continue
 
-            error_type = random.choice(misplacement_examples)[0]
-            actual_parts = parts.copy()
-
-            if error_type == "floor":
-                floor = int(parts[0])
-                actual_parts[0] = str(max(1, min(5, floor + random.choice([-1, 1]))))
-            elif error_type == "zone":
-                zones = ["A", "B", "C", "D"]
-                idx = zones.index(parts[1]) if parts[1] in zones else 0
-                actual_parts[1] = zones[max(0, min(len(zones)-1, idx + random.choice([-1, 1])))]
-            elif error_type == "row":
-                row = int(parts[2])
-                actual_parts[2] = str(max(1, min(6, row + random.choice([-1, 1]))))
-            elif error_type == "level":
-                level = int(parts[3])
-                actual_parts[3] = str(max(1, min(6, level + random.choice([-1, 1]))))
-            else:
-                pos = int(parts[4])
-                actual_parts[4] = str(max(1, min(30, pos + random.choice([1, 2]))))
-
-            actual = "-".join(actual_parts)
             days_ago = random.randint(0, 90)
             record_time = datetime.now() - timedelta(days=days_ago)
+            inspector = random.choice(["张馆长", "李管理员", "王管理员"])
+            ts = record_time.strftime("%Y-%m-%d %H:%M:%S")
+            month = record_time.strftime("%Y-%m")
 
-            stats_mgr._misplacement_records.append({
-                "id": i + 1,
-                "rfid": book["rfid"],
-                "actual_location": actual,
-                "proper_location": proper,
-                "inspector": random.choice(["张馆长", "李管理员", "王管理员"]),
-                "timestamp": record_time.strftime("%Y-%m-%d %H:%M:%S"),
-                "month": record_time.strftime("%Y-%m")
-            })
+            is_misplaced = random.random() < 0.3
 
-        stats_mgr._save_misplacement_records()
-        print(f"  已生成 {len(stats_mgr._misplacement_records)} 条错位记录")
+            if is_misplaced:
+                error_type = random.choice(misplacement_examples)[0]
+                actual_parts = parts.copy()
+
+                if error_type == "floor":
+                    floor = int(parts[0])
+                    actual_parts[0] = str(max(1, min(5, floor + random.choice([-1, 1]))))
+                elif error_type == "zone":
+                    zones = ["A", "B", "C", "D"]
+                    idx = zones.index(parts[1]) if parts[1] in zones else 0
+                    actual_parts[1] = zones[max(0, min(len(zones)-1, idx + random.choice([-1, 1])))]
+                elif error_type == "row":
+                    row = int(parts[2])
+                    actual_parts[2] = str(max(1, min(6, row + random.choice([-1, 1]))))
+                elif error_type == "level":
+                    level = int(parts[3])
+                    actual_parts[3] = str(max(1, min(6, level + random.choice([-1, 1]))))
+                else:
+                    pos = int(parts[4])
+                    actual_parts[4] = str(max(1, min(30, pos + random.choice([1, 2]))))
+
+                actual = "-".join(actual_parts)
+
+                misp_id += 1
+                misplacement_records.append({
+                    "id": misp_id,
+                    "rfid": book["rfid"],
+                    "actual_location": actual,
+                    "proper_location": proper,
+                    "inspector": inspector,
+                    "timestamp": ts,
+                    "month": month
+                })
+
+                insp_id += 1
+                inspection_records.append({
+                    "id": insp_id,
+                    "rfid": book["rfid"],
+                    "result": "misplaced",
+                    "location": None,
+                    "actual_location": actual,
+                    "proper_location": proper,
+                    "inspector": inspector,
+                    "timestamp": ts,
+                    "month": month
+                })
+            else:
+                insp_id += 1
+                inspection_records.append({
+                    "id": insp_id,
+                    "rfid": book["rfid"],
+                    "result": "correct",
+                    "location": proper,
+                    "actual_location": None,
+                    "proper_location": proper,
+                    "inspector": inspector,
+                    "timestamp": ts,
+                    "month": month
+                })
+
+        if need_misplacement:
+            stats_mgr._misplacement_records = misplacement_records
+            stats_mgr._save_misplacement_records()
+            print(f"    错位记录: {len(misplacement_records)} 条")
+
+        if need_inspection:
+            stats_mgr._inspection_records = inspection_records
+            stats_mgr._save_inspection_records()
+            print(f"    抽检记录: {len(inspection_records)} 条 (正确 {len(inspection_records) - len(misplacement_records)} / 错位 {len(misplacement_records)})")
 
     print("\n测试数据生成完成！")
     print(f"数据目录: {DATA_DIR}")
@@ -248,7 +297,21 @@ def test_boundary_scenarios():
     for p in paths:
         print(f"    - {p['prefix']}: {p['description']} (优先级: {p['priority']})")
 
-    print("\n7. 错位根因分析测试")
+    print("\n7. 错位率统计测试（核心修复验证）")
+    print("-" * 40)
+    misplacement_stats = stats_mgr.get_misplacement_rate()
+    print(f"  整体错位率: {misplacement_stats['overall_rate']}%")
+    print(f"  总抽检数: {misplacement_stats['total_checked']}")
+    print(f"  错位数: {misplacement_stats['total_misplaced']}")
+    print(f"  正确数: {misplacement_stats['total_correct']}")
+    print(f"  数据质量: {misplacement_stats['data_quality']['status']}")
+    if misplacement_stats['zone_rates']:
+        print(f"  各区域错位率:")
+        for zone in misplacement_stats['zone_rates']:
+            marker = "🔴" if zone['warning_level'] == "high" else "🟡" if zone['warning_level'] == "medium" else "🟢"
+            print(f"    {marker} {zone['zone']}: {zone['misplacement_rate']}% (抽检{zone['total_checked']} 错位{zone['misplaced_count']} 正确{zone['correct_count']})")
+
+    print("\n8. 错位根因分析测试")
     print("-" * 40)
     analysis = stats_mgr.analyze_misplacement_causes()
     print(f"  总错位记录: {analysis['total_records']}")

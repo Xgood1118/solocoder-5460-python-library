@@ -1,24 +1,28 @@
 from datetime import datetime, timedelta
 from collections import defaultdict
 
-from .config import MISPLACEMENT_RECORDS_FILE, load_json, save_json
+from .config import MISPLACEMENT_RECORDS_FILE, INSPECTION_RECORDS_FILE, load_json, save_json
 from .utils import get_month_key, get_current_time
 
 
 class StatisticsManager:
     def __init__(self, book_manager=None, borrow_manager=None, shelf_manager=None):
         self._misplacement_records = []
+        self._inspection_records = []
         self._book_manager = book_manager
         self._borrow_manager = borrow_manager
         self._shelf_manager = shelf_manager
-        self._load_misplacement_records()
+        self._load_records()
 
-    def _load_misplacement_records(self):
-        data = load_json(MISPLACEMENT_RECORDS_FILE, [])
-        self._misplacement_records = data
+    def _load_records(self):
+        self._misplacement_records = load_json(MISPLACEMENT_RECORDS_FILE, [])
+        self._inspection_records = load_json(INSPECTION_RECORDS_FILE, [])
 
     def _save_misplacement_records(self):
         save_json(MISPLACEMENT_RECORDS_FILE, self._misplacement_records)
+
+    def _save_inspection_records(self):
+        save_json(INSPECTION_RECORDS_FILE, self._inspection_records)
 
     def set_managers(self, book_manager, borrow_manager, shelf_manager):
         self._book_manager = book_manager
@@ -37,6 +41,33 @@ class StatisticsManager:
         }
         self._misplacement_records.append(record)
         self._save_misplacement_records()
+
+        self.add_inspection_record(
+            rfid=rfid,
+            result="misplaced",
+            actual_location=actual_location,
+            proper_location=proper_location,
+            inspector=inspector
+        )
+
+        return record
+
+    def add_inspection_record(self, rfid, result, location=None,
+                              actual_location=None, proper_location=None,
+                              inspector=None):
+        record = {
+            "id": len(self._inspection_records) + 1,
+            "rfid": rfid,
+            "result": result,
+            "location": location,
+            "actual_location": actual_location,
+            "proper_location": proper_location or location,
+            "inspector": inspector,
+            "timestamp": get_current_time(),
+            "month": get_month_key()
+        }
+        self._inspection_records.append(record)
+        self._save_inspection_records()
         return record
 
     def get_monthly_borrow_stats(self, months=12):
@@ -141,41 +172,55 @@ class StatisticsManager:
         cold_books.sort(key=lambda x: x["days_not_borrowed"], reverse=True)
         return cold_books
 
+    def _extract_zone_key(self, location):
+        if not location:
+            return None
+        parts = location.split("-")
+        if len(parts) >= 2:
+            return parts[0] + "-" + parts[1]
+        return None
+
     def get_misplacement_rate(self, by_zone=True):
-        if not self._misplacement_records:
+        if not self._inspection_records:
             return {
                 "overall_rate": 0,
+                "total_checked": 0,
+                "total_misplaced": 0,
+                "total_correct": 0,
                 "zone_rates": [],
                 "data_quality": {
                     "status": "no_data",
-                    "warning": "暂无错位记录数据"
+                    "warning": "暂无抽检记录数据"
                 }
             }
 
-        monthly_rates = defaultdict(lambda: {"misplaced": 0, "total": 0})
-        zone_rates = defaultdict(lambda: {"misplaced": 0, "total": 0})
+        total_checked = len(self._inspection_records)
+        total_misplaced = 0
+        zone_data = defaultdict(lambda: {"checked": 0, "misplaced": 0})
 
-        for record in self._misplacement_records:
-            month = record.get("month", "")
-            monthly_rates[month]["misplaced"] += 1
-            monthly_rates[month]["total"] += 1
+        for record in self._inspection_records:
+            is_misplaced = record.get("result") == "misplaced"
+            if is_misplaced:
+                total_misplaced += 1
 
-            proper_loc = record.get("proper_location", "")
-            if proper_loc and len(proper_loc.split("-")) >= 2:
-                zone_key = proper_loc.split("-")[0] + "-" + proper_loc.split("-")[1]
-                zone_rates[zone_key]["misplaced"] += 1
+            loc = record.get("proper_location") or record.get("location") or ""
+            zone_key = self._extract_zone_key(loc)
+            if zone_key:
+                zone_data[zone_key]["checked"] += 1
+                if is_misplaced:
+                    zone_data[zone_key]["misplaced"] += 1
 
-        total_misplaced = len(self._misplacement_records)
-        total_checked = total_misplaced
+        total_correct = total_checked - total_misplaced
         overall_rate = total_misplaced / total_checked * 100 if total_checked > 0 else 0
 
         zone_stats = []
-        for zone_key, data in sorted(zone_rates.items()):
-            rate = data["misplaced"] / data["total"] * 100 if data["total"] > 0 else 0
+        for zone_key, data in sorted(zone_data.items()):
+            rate = data["misplaced"] / data["checked"] * 100 if data["checked"] > 0 else 0
             zone_stats.append({
                 "zone": zone_key,
+                "total_checked": data["checked"],
                 "misplaced_count": data["misplaced"],
-                "total_checked": data["total"],
+                "correct_count": data["checked"] - data["misplaced"],
                 "misplacement_rate": round(rate, 2),
                 "warning_level": "high" if rate > 10 else "medium" if rate > 5 else "low"
             })
@@ -199,6 +244,7 @@ class StatisticsManager:
             "overall_rate": round(overall_rate, 2),
             "total_checked": total_checked,
             "total_misplaced": total_misplaced,
+            "total_correct": total_correct,
             "zone_rates": zone_stats,
             "data_quality": data_quality
         }
@@ -243,8 +289,8 @@ class StatisticsManager:
                         except ValueError:
                             pass
 
-            if proper and len(proper.split("-")) >= 2:
-                zone_key = proper.split("-")[0] + "-" + proper.split("-")[1]
+            zone_key = self._extract_zone_key(proper)
+            if zone_key:
                 zone_misplacements[zone_key] += 1
                 floor_misplacements[proper.split("-")[0]] += 1
 
@@ -345,5 +391,8 @@ class StatisticsManager:
     def get_misplacement_records(self, limit=100):
         return self._misplacement_records[-limit:]
 
+    def get_inspection_records(self, limit=100):
+        return self._inspection_records[-limit:]
+
     def reload(self):
-        self._load_misplacement_records()
+        self._load_records()

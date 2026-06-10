@@ -226,6 +226,52 @@ def create_app():
         months = request.args.get("months", 12, type=int)
         return jsonify({"months": stats_mgr.get_monthly_borrow_stats(months)})
 
+    @app.route("/api/statistics/popular", methods=["GET"])
+    def get_popular_books():
+        top_n = request.args.get("top", 10, type=int)
+        books = stats_mgr.get_popular_books(top_n)
+        return jsonify({"count": len(books), "books": books})
+
+    @app.route("/api/statistics/cold", methods=["GET"])
+    def get_cold_books():
+        days = request.args.get("days", 365, type=int)
+        top_n = request.args.get("top", 10, type=int)
+        books = stats_mgr.get_cold_books(days)
+        return jsonify({"count": len(books[:top_n]), "books": books[:top_n]})
+
+    @app.route("/api/inspections", methods=["POST"])
+    def add_inspection():
+        data = request.get_json()
+        if not data or "records" not in data:
+            return jsonify({"error": "缺少必要参数 records"}), 400
+
+        results = []
+        for item in data["records"]:
+            rfid = item.get("rfid")
+            result_type = item.get("result")
+            if not rfid or result_type not in ("correct", "misplaced"):
+                results.append({"rfid": rfid, "success": False, "error": "参数无效"})
+                continue
+
+            if result_type == "misplaced":
+                record = stats_mgr.add_inspection_record(
+                    rfid=rfid,
+                    result="misplaced",
+                    actual_location=item.get("actual_location"),
+                    proper_location=item.get("proper_location"),
+                    inspector=item.get("inspector")
+                )
+            else:
+                record = stats_mgr.add_inspection_record(
+                    rfid=rfid,
+                    result="correct",
+                    location=item.get("location"),
+                    inspector=item.get("inspector")
+                )
+            results.append({"rfid": rfid, "success": True, "record_id": record["id"]})
+
+        return jsonify({"count": len(results), "results": results})
+
     @app.route("/api/config/categories", methods=["GET"])
     def get_categories():
         from library.config import CATEGORY_MAP_FILE, load_json

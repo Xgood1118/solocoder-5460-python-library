@@ -11,6 +11,26 @@
       "priority": 0
     },
     {
+      "prefix": "2-C",
+      "description": "文学区优先",
+      "priority": 0
+    },
+    {
+      "prefix": "2-C",
+      "description": "文学区优先",
+      "priority": 0
+    },
+    {
+      "prefix": "4-B",
+      "description": "计算机区次之",
+      "priority": 1
+    },
+    {
+      "prefix": "4-B",
+      "description": "计算机区次之",
+      "priority": 1
+    },
+    {
       "prefix": "4-B",
       "description": "计算机区次之",
       "priority": 1
